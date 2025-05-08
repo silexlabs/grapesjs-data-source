@@ -26,6 +26,7 @@ import settings from './settings'
 import '@silexlabs/expression-input'
 import './properties-editor'
 import './custom-states-editor'
+import canvas from './canvas'
 
 export default (editor: DataSourceEditor, opts: DataSourceEditorOptions) => {
   if (opts.view.el) {
@@ -147,6 +148,7 @@ export default (editor: DataSourceEditor, opts: DataSourceEditorOptions) => {
         })
         wrapper.style.display = button.active ? 'block' : 'none'
       }
+      canvas(editor)
     })
   } else {
     console.warn('Dynamic data UI not enabled, please set the el option to enable it')
