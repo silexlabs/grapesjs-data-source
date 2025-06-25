@@ -143,12 +143,12 @@ export default class GraphQL extends Backbone.Model<GraphQLOptions> implements I
         }))
         // Map to Type
         .map(({type, kind}) => this.graphQLToType(allTypes, type, kind, true))
-      
+
       // Get all queryables as fields
       const queryableFields = query.fields
         // Map to Field
         .map((field: GQLField) => this.graphQLToField(field))
-      
+
       // Return all types, queryables and non-queryables
       return [queryableTypes.concat(nonQueryables), queryableFields, queryType]
     } catch (e) {
@@ -454,12 +454,8 @@ export default class GraphQL extends Backbone.Model<GraphQLOptions> implements I
     }
   }
 
-  //async getData(query: Query): Promise<any[]> {
-  //  const result = await this.call(`
-  //      query {
-  //        ${this.buildQuery(query)}
-  //      }
-  //    `) as any
-  //  return result.data.Query[query.name]
-  //}
+  async fetchValues(query: string): Promise<unknown[]> {
+    const result = await this.call(query) as { data: unknown[] }
+    return result.data
+  }
 }
