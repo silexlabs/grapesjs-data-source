@@ -16,13 +16,13 @@
  */
 
 import Backbone from 'backbone'
-import { COMPONENT_STATE_CHANGED, DATA_SOURCE_CHANGED, DATA_SOURCE_ERROR, DATA_SOURCE_READY, DataSourceId, Filter, IDataSource, IDataSourceModel, Property, StoredToken } from '../types'
+import { COMPONENT_STATE_CHANGED, DATA_SOURCE_CHANGED, DATA_SOURCE_DATA_LOAD_CANCEL, DATA_SOURCE_DATA_LOAD_END, DATA_SOURCE_DATA_LOAD_START, DATA_SOURCE_ERROR, DATA_SOURCE_READY, DataSourceId, Filter, IDataSource, IDataSourceModel, Property, StoredToken } from '../types'
 import { DataSourceEditor, DataSourceEditorOptions } from '../types'
 import { DataTree } from './DataTree'
 import { Component, Page } from 'grapesjs'
 import { StoredState, onStateChange } from './state'
 import getLiquidFilters from '../filters/liquid'
-import getGenericFilters from '../filters/generic'
+// import getGenericFilters from '../filters/generic'
 import { getComponentDebug, NOTIFICATION_GROUP } from '../utils'
 
 /**
@@ -61,7 +61,7 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
       // Include preset from filters/
       if (typeof options.filters === 'string') {
         return [
-          ...getGenericFilters(editor),
+          // ...getGenericFilters(editor),
           ...getLiquidFilters(editor),
         ]
       } else {
@@ -71,7 +71,7 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
             if (typeof filter === 'string') {
               switch (filter) {
               case 'liquid': return getLiquidFilters(editor)
-              case 'generic': return getGenericFilters(editor)
+              // case 'generic': return getGenericFilters(editor)
               default: throw new Error(`Unknown filters ${filter}`)
               }
             } else {
@@ -100,7 +100,10 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
     this.modelChanged()
 
     // Relay state changes to the editor
-    onStateChange((state: StoredState | null, component: Component) => this.editor.trigger(COMPONENT_STATE_CHANGED, { state, component }))
+    onStateChange((state: StoredState | null, component: Component) => {
+      this.updateData()
+      this.editor.trigger(COMPONENT_STATE_CHANGED, { state, component })
+    })
   }
 
   /**
@@ -123,7 +126,7 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
    */
   protected dataSourceReadyBinded = this.dataSourceReady.bind(this)
   dataSourceReady(ds: IDataSource) {
-    this.editor.trigger(DATA_SOURCE_READY, ds)
+    this.trigger(DATA_SOURCE_READY, ds)
   }
 
   /**
@@ -138,6 +141,9 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
    * Listen to data source changes
    */
   modelChanged(e?: CustomEvent) {
+    // Update current page data, keep going in the background
+    this.updateData()
+    // Synchronize the data tree with the current data sources
     this.dataTree.dataSources = this.models.map(ds => getDataSourceClass(ds)) as IDataSourceModel[]
     // Remove all listeners
     this.models.forEach((dataSource: IDataSourceModel) => {
@@ -161,6 +167,8 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
    * Listen to data source changes
    */
   modelReady(ds: IDataSource) {
+    // Update current page data, keep going in the background
+    this.updateData()
     // Forward the event
     this.editor.trigger(DATA_SOURCE_READY, ds)
   }
@@ -173,6 +181,12 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
     const expressions = this.dataTree.getPageExpressions(page)
     return this.models
       .map(ds => {
+        if (!ds.isConnected()) {
+          return {
+            dataSourceId: ds.id.toString(),
+            query: '',
+          }
+        }
         const dsExpressions = expressions
           // Resolve all states
           .map((componentExpression) => ({
@@ -207,7 +221,7 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
             // So this is a property
             const first = e[0] as Property
             // Keep only the expressions for the current data source
-            return first.dataSourceId === ds.id
+            return first?.dataSourceId === ds.id
           })
         const trees = this.dataTree.toTrees(dsExpressions, ds.id)
         if(trees.length === 0) {
@@ -227,5 +241,73 @@ export class DataSourceManager extends Backbone.Collection<IDataSourceModel> {
         acc[dataSourceId] = query
         return acc
       }, {} as Record<DataSourceId, string>)
+  }
+
+  private currentUpdatePid = 0
+  async updateData() {
+    this.editor.trigger(DATA_SOURCE_DATA_LOAD_START)
+    const page = this.editor.Pages.getSelected()
+    if (!page) return
+    this.currentUpdatePid++
+    const data = await this.getPageData(page)
+    if (data !== 'interrupted') {
+      this.dataTree.queryResult = data
+      this.editor.trigger(DATA_SOURCE_DATA_LOAD_END, data)
+    } else {
+      console.warn(`Data update process for PID ${this.currentUpdatePid} was interrupted.`)
+      this.editor.trigger(DATA_SOURCE_DATA_LOAD_CANCEL, data)
+    }
+  }
+
+  async getPageData(page: Page): Promise<Record<DataSourceId, unknown> | 'interrupted'> {
+    const myPid = this.currentUpdatePid
+    const queries = this.getPageQuery(page)
+
+    try {
+      const results = await Promise.all(
+        Object.entries(queries).map(async ([dataSourceId, query]) => {
+          if (myPid !== this.currentUpdatePid) return
+          const ds = this.models.find(ds => ds.id === dataSourceId)
+          if (!ds) {
+            console.error(`Data source ${dataSourceId} not found`)
+            return null
+          }
+          if (!ds.isConnected()) {
+            console.warn(`Data source ${dataSourceId} is not connected.`)
+            return null
+          }
+          try {
+            const value = await ds.fetchValues(query)
+            return { dataSourceId, value }
+          } catch (err) {
+            console.error(`Error fetching values for data source ${dataSourceId}:`, err)
+            this.editor.runCommand('notifications:add', {
+              type: 'error',
+              group: NOTIFICATION_GROUP,
+              message: `Error fetching values for data source ${dataSourceId}: ${err}`,
+            })
+            return null
+          }
+        })
+      )
+
+      if (myPid !== this.currentUpdatePid) return 'interrupted'
+
+      return results
+        .filter(result => result !== null)
+        .reduce((acc, result) => {
+          const { dataSourceId, value } = result!
+          acc[dataSourceId] = value
+          return acc
+        }, {} as Record<DataSourceId, unknown>)
+    } catch (err) {
+      console.error('Error while fetching values:', err)
+      this.editor.runCommand('notifications:add', {
+        type: 'error',
+        group: NOTIFICATION_GROUP,
+        message: `Error while fetching values: ${err}`,
+      })
+      return {}
+    }
   }
 }

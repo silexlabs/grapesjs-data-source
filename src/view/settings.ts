@@ -1,10 +1,10 @@
 import { createRef, Ref, ref } from 'lit/directives/ref.js'
 import {repeat} from 'lit/directives/repeat.js'
 import GraphQL, { GraphQLOptions } from '../datasources/GraphQL'
-import { DATA_SOURCE_CHANGED, DATA_SOURCE_ERROR, DATA_SOURCE_READY, DataSourceEditor, DataSourceEditorViewOptions, IDataSourceModel } from '../types'
+import { DATA_SOURCE_CHANGED, DATA_SOURCE_DATA_LOAD_END, DATA_SOURCE_ERROR, DATA_SOURCE_READY, DataSourceEditor, DataSourceEditorViewOptions, IDataSourceModel } from '../types'
 import { getDefaultOptions, getElementFromOption } from '../utils'
 import { css, html, LitElement, render } from 'lit'
-import { customElement, property } from 'lit/decorators.js'
+import { property } from 'lit/decorators.js'
 
 const COMMON_STYLES = css`
     :host {
@@ -66,7 +66,7 @@ export default (editor: DataSourceEditor, options: Partial<DataSourceEditorViewO
     // Get the container element for the UI
     const settingsEl = getElementFromOption(options.settingsEl, 'options.settingsEl')
     const dsSettings: Ref<SettingsDataSources> = createRef()
-    editor.on(`${DATA_SOURCE_CHANGED} ${DATA_SOURCE_ERROR} ${DATA_SOURCE_READY}`, () => {
+    editor.on(`${DATA_SOURCE_CHANGED} ${DATA_SOURCE_ERROR} ${DATA_SOURCE_READY} ${DATA_SOURCE_DATA_LOAD_END}`, () => {
       if(dsSettings.value) {
         dsSettings.value.dataSources = [...editor.DataSourceManager]
         dsSettings.value.requestUpdate()
@@ -112,7 +112,6 @@ function renderSettings(editor: DataSourceEditor, dsSettings: Ref, settingsEl: H
 /**
  * <ds-settings> is a web component that renders the settings dialog for the DataSourceEditor plugin
  */
-@customElement('ds-settings')
 class SettingsDataSources extends LitElement {
 
   @property({ type: Array })
@@ -183,8 +182,11 @@ class SettingsDataSources extends LitElement {
   }
 }
 
-@customElement('ds-settings__data-source')
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+if(!customElements.get('ds-settings')) {
+  customElements.define('ds-settings', SettingsDataSources)
+}
+
+
 class SettingsDataSource extends LitElement {
   @property({ type: Object })
     dataSource: IDataSourceModel | null
@@ -369,7 +371,10 @@ class SettingsDataSource extends LitElement {
   }
 }
 
-@customElement('ds-settings__headers')
+if(!customElements.get('ds-settings__data-source')) {
+  customElements.define('ds-settings__data-source', SettingsDataSource)
+}
+
 class SettingsHeaders extends LitElement {
   @property({ type: Array })
     headers: Record<string, string>
@@ -491,4 +496,8 @@ class SettingsHeaders extends LitElement {
       </div>
     `
   }
+}
+
+if(!customElements.get('ds-settings__headers')) {
+  customElements.define('ds-settings__headers', SettingsHeaders)
 }

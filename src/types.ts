@@ -85,13 +85,16 @@ export interface IDataSource {
   getQuery(trees: Tree[]): string
 
   // Access data
-  //fetchValues(query: Query): Promise<unknown[]>
+  fetchValues(query: string): Promise<unknown>
 }
 export const DATA_SOURCE_READY = 'data-source:ready'
 export const DATA_SOURCE_ERROR = 'data-source:error'
 export const DATA_SOURCE_CHANGED = 'data-source:changed'
 export const COMPONENT_STATE_CHANGED = 'component:state:changed'
 export const COMMAND_REFRESH = 'data-source:refresh'
+export const DATA_SOURCE_DATA_LOAD_START = 'data-source:data-load:start'
+export const DATA_SOURCE_DATA_LOAD_END = 'data-source:data-load:end'
+export const DATA_SOURCE_DATA_LOAD_CANCEL= 'data-source:data-load:cancel'
 
 // For use by the DataSourceManager class which is a Backbone collection
 export interface IDataSourceModel extends Model<any, ModelSetOptions, any>, IDataSource {}
@@ -138,6 +141,7 @@ export interface Field {
   kind: FieldKind
   dataSourceId?: DataSourceId
   arguments?: FieldArgument[]
+  previewIndex?: number
 }
 
 // **
@@ -170,6 +174,7 @@ export interface StoredProperty extends BaseProperty {
   label: string
   kind: FieldKind
   options?: PropertyOptions
+  previewIndex?: number
 }
 export interface Property extends StoredProperty {
   optionsForm?: (selected: Component, input: Field | null, options: Options, stateName: string) => TemplateResult | null
@@ -188,6 +193,7 @@ export interface StoredFilter {
   options: Options
   quotedOptions?: string[]
   optionsKeys?: string[] // Optional, used to set a specific order
+  previewIndex?: number
 }
 export interface Filter extends StoredFilter {
   optionsForm?: (selected: Component, input: Field | null, options: Options, stateName: string) => TemplateResult | null
@@ -203,6 +209,7 @@ export type StateId = string
 export interface State {
   type: 'state'
   storedStateId: StateId // Id of the state stored in the component
+  previewIndex?: number
   label: string
   componentId: string
   exposed: boolean
@@ -263,4 +270,9 @@ export enum Properties {
   condition = 'condition',
   condition2 = 'condition2',
   __data = '__data',
+}
+
+export interface ComponentExpression {
+  expression: Expression
+  component: Component
 }

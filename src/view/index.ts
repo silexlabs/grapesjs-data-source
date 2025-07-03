@@ -15,7 +15,7 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 
-import { DataSourceEditor, DataSourceEditorOptions, DataSourceEditorViewOptions, getElementFromOption, Properties } from '..'
+import { DataSourceEditor, DataSourceEditorOptions, DataSourceEditorViewOptions, Properties } from '../types'
 import { PROPERTY_STYLES } from './defaultStyles'
 
 import { PropertiesEditor } from './properties-editor'
@@ -26,6 +26,8 @@ import settings from './settings'
 import '@silexlabs/expression-input'
 import './properties-editor'
 import './custom-states-editor'
+import canvas from './canvas'
+import { getElementFromOption } from '../utils'
 
 export default (editor: DataSourceEditor, opts: DataSourceEditorOptions) => {
   if (opts.view.el) {
@@ -57,7 +59,7 @@ export default (editor: DataSourceEditor, opts: DataSourceEditorOptions) => {
           Custom states are used to store data in the component.\n
           They are useful to store data that is not displayed in the page, but that is used in the expressions everywhere inside the element.
         "
-        help-link="https://docs.silex.me/en/user/cms#states"
+        help-link="https://docs.silex.me/en/user/cms-concepts#states"
         >
         <style>
           ${options.styles}
@@ -78,7 +80,7 @@ export default (editor: DataSourceEditor, opts: DataSourceEditorOptions) => {
           HTML attributes of the element.\n
           For example you can set the 'href' attribute of a link, or the 'src' attribute of an image.
         "
-        help-link="https://docs.silex.me/en/user/cms#attributes"
+        help-link="https://docs.silex.me/en/user/cms-concepts#attributes"
         >
         <style>
           ${options.styles}
@@ -147,6 +149,7 @@ export default (editor: DataSourceEditor, opts: DataSourceEditorOptions) => {
         })
         wrapper.style.display = button.active ? 'block' : 'none'
       }
+      canvas(editor)
     })
   } else {
     console.warn('Dynamic data UI not enabled, please set the el option to enable it')
