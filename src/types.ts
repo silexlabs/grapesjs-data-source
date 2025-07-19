@@ -17,16 +17,9 @@
 
 import { Component, Editor } from 'grapesjs'
 import { TemplateResult } from 'lit'
-import { DataSourceManager } from './model/DataSourceManager'
+import { DataSourceManagerState } from './model/dataSourceManager'
 import { Button } from 'grapesjs'
-import { Model, ModelSetOptions } from 'backbone'
 
-/**
- * Add the DataSourceManager to the GrapesJs editor
- */
-export interface DataSourceEditor extends Editor {
-  DataSourceManager: DataSourceManager
-}
 
 export interface DataSourceEditorViewOptions {
   el?: HTMLElement | string | undefined | (() => HTMLElement)
@@ -67,13 +60,21 @@ export interface Tree {
 }
 
 // Data sources must implement this interface
-export type DataSourceId = string | number // Matches the Backbone.Model.id type
+export type DataSourceId = string | number
 export interface IDataSource {
   // For reference in expressions
   id: DataSourceId
+  
+  // Basic properties
+  label: string
+  url: string
+  type: DataSourceType
+  method?: string
+  headers?: Record<string, string>
 
   // Hide from users settings
   hidden?: boolean
+  readonly?: boolean
 
   // Initialization
   connect(): Promise<void>
@@ -85,21 +86,27 @@ export interface IDataSource {
   getQuery(trees: Tree[]): string
 
   // Access data
-  //fetchValues(query: Query): Promise<unknown[]>
+  fetchValues(query: string): Promise<unknown>
+  
+  // Event handling
+  on?(event: any, callback?: any, context?: any): any
+  off?(event?: any, callback?: any, context?: any): any
+  trigger?(event: any, ...args: unknown[]): any
 }
 export const DATA_SOURCE_READY = 'data-source:ready'
 export const DATA_SOURCE_ERROR = 'data-source:error'
 export const DATA_SOURCE_CHANGED = 'data-source:changed'
 export const COMPONENT_STATE_CHANGED = 'component:state:changed'
 export const COMMAND_REFRESH = 'data-source:refresh'
+export const DATA_SOURCE_DATA_LOAD_START = 'data-source:data-load:start'
+export const DATA_SOURCE_DATA_LOAD_END = 'data-source:data-load:end'
+export const DATA_SOURCE_DATA_LOAD_CANCEL= 'data-source:data-load:cancel'
 
-// For use by the DataSourceManager class which is a Backbone collection
-export interface IDataSourceModel extends Model<any, ModelSetOptions, any>, IDataSource {}
 
 export type DataSourceType = 'graphql'
 
 // Options of a data source
-export interface IDataSourceOptions extends Backbone.ModelSetOptions {
+export interface IDataSourceOptions {
   id: DataSourceId
   label: string
   type: DataSourceType
@@ -138,6 +145,7 @@ export interface Field {
   kind: FieldKind
   dataSourceId?: DataSourceId
   arguments?: FieldArgument[]
+  previewIndex?: number
 }
 
 // **
@@ -170,6 +178,7 @@ export interface StoredProperty extends BaseProperty {
   label: string
   kind: FieldKind
   options?: PropertyOptions
+  previewIndex?: number
 }
 export interface Property extends StoredProperty {
   optionsForm?: (selected: Component, input: Field | null, options: Options, stateName: string) => TemplateResult | null
@@ -188,6 +197,7 @@ export interface StoredFilter {
   options: Options
   quotedOptions?: string[]
   optionsKeys?: string[] // Optional, used to set a specific order
+  previewIndex?: number
 }
 export interface Filter extends StoredFilter {
   optionsForm?: (selected: Component, input: Field | null, options: Options, stateName: string) => TemplateResult | null
@@ -203,6 +213,7 @@ export type StateId = string
 export interface State {
   type: 'state'
   storedStateId: StateId // Id of the state stored in the component
+  previewIndex?: number
   label: string
   componentId: string
   exposed: boolean
@@ -263,4 +274,9 @@ export enum Properties {
   condition = 'condition',
   condition2 = 'condition2',
   __data = '__data',
+}
+
+export interface ComponentExpression {
+  expression: Expression
+  component: Component
 }

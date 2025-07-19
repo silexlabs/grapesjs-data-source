@@ -16,10 +16,9 @@
  */
 
 import { Field, Filter, Options } from '../types'
-import { DataSourceEditor } from '..'
 import { html } from 'lit'
 import { convertKind, getFieldType } from '../utils'
-import { Component } from 'grapesjs'
+import { Component, Editor } from 'grapesjs'
 
 /**
  * Check if a field is a number
@@ -51,7 +50,7 @@ export function isDate(field: Field | null, scalarOnly = true): boolean {
 /**
  * Liquid filters
  */
-export default function(editor: DataSourceEditor): Filter[] {
+export default function(editor: Editor): Filter[] {
   return [
     {
       type: 'filter',
