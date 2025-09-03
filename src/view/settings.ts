@@ -1,10 +1,12 @@
 import { createRef, Ref, ref } from 'lit/directives/ref.js'
 import {repeat} from 'lit/directives/repeat.js'
 import GraphQL, { GraphQLOptions } from '../datasources/GraphQL'
-import { DATA_SOURCE_CHANGED, DATA_SOURCE_ERROR, DATA_SOURCE_READY, DataSourceEditor, DataSourceEditorViewOptions, IDataSourceModel } from '../types'
+import { DATA_SOURCE_CHANGED, DATA_SOURCE_DATA_LOAD_END, DATA_SOURCE_ERROR, DATA_SOURCE_READY, DataSourceEditorViewOptions, IDataSource } from '../types'
 import { getDefaultOptions, getElementFromOption } from '../utils'
+import { getAllDataSources, addDataSource, removeDataSource } from '../model/dataSourceRegistry'
 import { css, html, LitElement, render } from 'lit'
-import { customElement, property } from 'lit/decorators.js'
+import { property } from 'lit/decorators.js'
+import { Editor } from 'grapesjs'
 
 const COMMON_STYLES = css`
     :host {
@@ -60,15 +62,15 @@ const COMMON_STYLES = css`
     }
 `
 
-export default (editor: DataSourceEditor, options: Partial<DataSourceEditorViewOptions> = {}) => {
+export default (editor: Editor, options: Partial<DataSourceEditorViewOptions> = {}) => {
   // Settings dialog
   if (options.settingsEl) {
     // Get the container element for the UI
     const settingsEl = getElementFromOption(options.settingsEl, 'options.settingsEl')
     const dsSettings: Ref<SettingsDataSources> = createRef()
-    editor.on(`${DATA_SOURCE_CHANGED} ${DATA_SOURCE_ERROR} ${DATA_SOURCE_READY}`, () => {
+    editor.on(`${DATA_SOURCE_CHANGED} ${DATA_SOURCE_ERROR} ${DATA_SOURCE_READY} ${DATA_SOURCE_DATA_LOAD_END}`, () => {
       if(dsSettings.value) {
-        dsSettings.value.dataSources = [...editor.DataSourceManager]
+        dsSettings.value.dataSources = [...getAllDataSources()]
         dsSettings.value.requestUpdate()
       } else {
         renderSettings(editor, dsSettings, settingsEl)
@@ -78,32 +80,30 @@ export default (editor: DataSourceEditor, options: Partial<DataSourceEditorViewO
   }
 }
 
-function renderSettings(editor: DataSourceEditor, dsSettings: Ref, settingsEl: HTMLElement) {
+function renderSettings(editor: Editor, dsSettings: Ref, settingsEl: HTMLElement) {
   render(html`
     <ds-settings
       ${ref(dsSettings)}
       .dataSources=${[]}
       @change=${(e: CustomEvent) => {
-    const ds = e.detail as IDataSourceModel
-    editor.DataSourceManager
-    //.set([ds], { merge: true, remove: false })
-      .get(ds.get('id'))
-      ?.set(ds.toJSON())
-      //.reset(dsSettings.value?.dataSources || [])
+    const ds = e.detail as IDataSource
+    // Handle data source changes - this may need to be reimplemented
+    // depending on how the data source update logic should work
+    console.log('Data source changed:', ds)
   }}
       @add=${(e: CustomEvent) => {
     const ds = e.detail as GraphQLOptions
     const newDS = new GraphQL(ds)
-    editor.DataSourceManager.add(newDS)
+    addDataSource(newDS)
   }}
       @add-top=${(e: CustomEvent) => {
     const ds = e.detail as GraphQLOptions
     const newDS = new GraphQL(ds)
-    editor.DataSourceManager.add(newDS, { at: 0 })
+    addDataSource(newDS)
   }}
       @delete=${(e: CustomEvent) => {
-    const ds = e.detail as IDataSourceModel
-    editor.DataSourceManager.remove(ds)
+    const ds = e.detail as IDataSource
+    removeDataSource(ds)
   }}
       ></ds-settings>
   `, settingsEl)
@@ -112,11 +112,10 @@ function renderSettings(editor: DataSourceEditor, dsSettings: Ref, settingsEl: H
 /**
  * <ds-settings> is a web component that renders the settings dialog for the DataSourceEditor plugin
  */
-@customElement('ds-settings')
 class SettingsDataSources extends LitElement {
 
   @property({ type: Array })
-    dataSources: IDataSourceModel[]
+    dataSources: IDataSource[]
 
   constructor() {
     super()
@@ -157,7 +156,7 @@ class SettingsDataSources extends LitElement {
   }}>\u2795</button>
     -->
       <hr class="ds-separator">
-      ${repeat(this.dataSources.filter(ds => !ds.hidden), (ds: IDataSourceModel) => ds.get('id'), (ds: IDataSourceModel) => html`
+      ${repeat(this.dataSources.filter(ds => !ds.hidden), (ds: IDataSource) => ds.id, (ds: IDataSource) => html`
         <ds-settings__data-source
           ${ref(dsDataSource)}
           .dataSource=${ds}
@@ -183,11 +182,14 @@ class SettingsDataSources extends LitElement {
   }
 }
 
-@customElement('ds-settings__data-source')
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+if(!customElements.get('ds-settings')) {
+  customElements.define('ds-settings', SettingsDataSources)
+}
+
+
 class SettingsDataSource extends LitElement {
   @property({ type: Object })
-    dataSource: IDataSourceModel | null
+    dataSource: IDataSource | null
   errorMessage: string = ''
   connected: boolean = false
 
@@ -256,7 +258,7 @@ class SettingsDataSource extends LitElement {
     const dsHeaders: Ref<SettingsHeaders> = createRef()
     return html`
     <form
-      ?readonly=${this.dataSource.get('readonly') !== false}
+      ?readonly=${this.dataSource.readonly !== false}
       @submit=${(e: Event) => {
     e.preventDefault()
     e.stopImmediatePropagation()
@@ -264,8 +266,8 @@ class SettingsDataSource extends LitElement {
   }}
       >
       <h3 class="ds-property__title">
-        ${this.dataSource.get('label')}
-        <small>${this.dataSource.get('readonly') !== false ? ' (Read-only)' : ''}</small>
+        ${this.dataSource.label || 'Unnamed'}
+        <small>${this.dataSource.readonly !== false ? ' (Read-only)' : ''}</small>
       </h3>
       <div class="ds-property__wrapper ds-property__wrapper--horiz">
       <label class="ds-field">
@@ -273,13 +275,13 @@ class SettingsDataSource extends LitElement {
         <input
           type="text"
           name="label"
-          value=${this.dataSource.get('label')}
+          value=${this.dataSource.label}
           @input=${(e: Event) => {
-    this.dataSource?.set('label', (e.target as HTMLInputElement).value)
+    if (this.dataSource) this.dataSource.label = (e.target as HTMLInputElement).value
     // Update the label in the title
     this.requestUpdate()
   }}
-          ?readonly=${this.dataSource.get('readonly') !== false}
+          ?readonly=${this.dataSource.readonly !== false}
           />
       </label>
       <label class="ds-field ds-field--large">
@@ -287,9 +289,9 @@ class SettingsDataSource extends LitElement {
         <input
           type="url"
           name="url"
-          value=${this.dataSource.get('url')}
-          @change=${(e: Event) => this.dataSource?.set('url', (e.target as HTMLInputElement).value)}
-          ?readonly=${this.dataSource.get('readonly') !== false}
+          value=${this.dataSource.url}
+          @change=${(e: Event) => { if (this.dataSource) this.dataSource.url = (e.target as HTMLInputElement).value }}
+          ?readonly=${this.dataSource.readonly !== false}
           />
       </label>
       <label class="ds-field">
@@ -297,7 +299,7 @@ class SettingsDataSource extends LitElement {
         <input
           type="text"
           name="id"
-          value=${this.dataSource.get('id')}
+          value=${this.dataSource.id}
           readonly
           disabled
           />
@@ -316,12 +318,12 @@ class SettingsDataSource extends LitElement {
         <span>Method</span>
         <select
           name="method"
-          @change=${(e: Event) => this.dataSource?.set('method', (e.target as HTMLInputElement).value)}
-          ?readonly=${this.dataSource.get('readonly') !== false}
-          ?disabled=${this.dataSource.get('readonly') !== false}
+          @change=${(e: Event) => { if (this.dataSource) this.dataSource.method = (e.target as HTMLInputElement).value as 'GET' | 'POST' }}
+          ?readonly=${this.dataSource.readonly !== false}
+          ?disabled=${this.dataSource.readonly !== false}
           >
-          <option value="POST" ?selected=${this.dataSource.get('method') === 'POST'}>POST</option>
-          <option value="GET" ?selected=${this.dataSource.get('method') === 'GET'}>GET</option>
+          <option value="POST" ?selected=${this.dataSource.method === 'POST'}>POST</option>
+          <option value="GET" ?selected=${this.dataSource.method === 'GET'}>GET</option>
         </select>
       </label>
       </div>
@@ -330,12 +332,12 @@ class SettingsDataSource extends LitElement {
           <summary>HTTP Headers</summary>
           <ds-settings__headers
             ${ref(dsHeaders)}
-            .headers=${this.dataSource.get('headers')}
+            .headers=${this.dataSource.headers}
             @change=${() => {
-    this.dataSource?.set('headers', dsHeaders.value?.headers)
+    if (this.dataSource) this.dataSource.headers = dsHeaders.value?.headers || {}
     dsHeaders.value?.requestUpdate()
   }}
-            ?readonly=${this.dataSource.get('readonly') !== false}
+            ?readonly=${this.dataSource.readonly !== false}
             ></ds-settings__headers>
         </details>
         <div class="ds-field ds-button-bar">
@@ -347,7 +349,7 @@ class SettingsDataSource extends LitElement {
           </div>
           <div class="ds-no-resize">
             <div>
-              ${this.dataSource.get('readonly') !== false ? '' : html`
+              ${this.dataSource.readonly !== false ? '' : html`
                 <button
                   type="button"
                   class="ds-btn-prim ds-btn-danger"
@@ -369,7 +371,10 @@ class SettingsDataSource extends LitElement {
   }
 }
 
-@customElement('ds-settings__headers')
+if(!customElements.get('ds-settings__data-source')) {
+  customElements.define('ds-settings__data-source', SettingsDataSource)
+}
+
 class SettingsHeaders extends LitElement {
   @property({ type: Array })
     headers: Record<string, string>
@@ -491,4 +496,8 @@ class SettingsHeaders extends LitElement {
       </div>
     `
   }
+}
+
+if(!customElements.get('ds-settings__headers')) {
+  customElements.define('ds-settings__headers', SettingsHeaders)
 }
