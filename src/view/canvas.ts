@@ -1,6 +1,6 @@
 import { Editor, Component } from 'grapesjs'
 import { getState, StoredState } from '../model/state'
-import { Properties, StoredToken, BinaryOperator, UnariOperator, PREVIEW_RENDER_START, PREVIEW_RENDER_END, PREVIEW_RENDER_ERROR, DataSourceEditorViewOptions } from '../types'
+import { Properties, StoredToken, Token, BinaryOperator, UnariOperator, PREVIEW_RENDER_START, PREVIEW_RENDER_END, PREVIEW_RENDER_ERROR, DataSourceEditorViewOptions } from '../types'
 import { fromStored } from '../model/token'
 import { evaluateExpressionTokens, EvaluationContext } from '../model/expressionEvaluator'
 import { getAllDataSources } from '../model/dataSourceRegistry'
@@ -10,11 +10,43 @@ function getPrivateState(component: Component, stateId: string): StoredState | n
   return getState(component, stateId, false)
 }
 
-// Helper function to evaluate expressions with internal API
+// Caches for performance optimization
+const expressionCache = new Map<string, unknown>()
+const fromStoredCache = new Map<string, Token>()
+let cacheVersion = 0
+
+// Clear caches when data changes
+function clearCaches() {
+  expressionCache.clear()
+  fromStoredCache.clear()
+  cacheVersion++
+}
+
+// Memoized fromStored conversion
+function memoizedFromStored(token: StoredToken, componentId: string | null): Token {
+  const cacheKey = `${JSON.stringify(token)}-${componentId}-${cacheVersion}`
+
+  if (fromStoredCache.has(cacheKey)) {
+    return fromStoredCache.get(cacheKey)!
+  }
+
+  const result = fromStored(token, componentId)
+  fromStoredCache.set(cacheKey, result)
+  return result
+}
+
+// Helper function to evaluate expressions with internal API + caching
 function evaluateExpression(expression: StoredToken[], component: Component, resolvePreviewIndex = true): unknown | null {
+  // Create cache key for this specific evaluation
+  const cacheKey = `${JSON.stringify(expression)}-${component.getId()}-${resolvePreviewIndex}-${cacheVersion}`
+
+  if (expressionCache.has(cacheKey)) {
+    return expressionCache.get(cacheKey)
+  }
+
   try {
-    // Convert StoredTokens to full Tokens first, like main branch did
-    const tokens = expression.map(token => fromStored(token, component.getId?.() || null))
+    // Convert StoredTokens to full Tokens with memoization
+    const tokens = expression.map(token => memoizedFromStored(token, component.getId?.() || null))
     const context: EvaluationContext = {
       dataSources: getAllDataSources(),
       filters: getFilters(),
@@ -22,7 +54,9 @@ function evaluateExpression(expression: StoredToken[], component: Component, res
       component,
       resolvePreviewIndex,
     }
-    return evaluateExpressionTokens(tokens, context)
+    const result = evaluateExpressionTokens(tokens, context)
+    expressionCache.set(cacheKey, result)
+    return result
   } catch (e) {
     console.warn('Error evaluating expression:', e)
     return null
@@ -95,8 +129,15 @@ function renderLoopData(
     if (__data === null) {
       return null
     }
+
     const result = evaluateExpression(__data.expression, component, false) // Get full array
-    return Array.isArray(result) ? JSON.parse(JSON.stringify(result)) : null
+
+    // Early return for empty arrays - major performance boost
+    if (!Array.isArray(result) || result.length === 0) {
+      return result && Array.isArray(result) ? [] : null
+    }
+
+    return JSON.parse(JSON.stringify(result))
   } catch (e) {
     console.warn('Error getting loop data:', e)
     return null
@@ -239,6 +280,42 @@ function renderContent(comp: Component, deep: number) {
   }
 }
 
+// Component render cache to avoid unnecessary re-renders
+const renderCache = new Map<string, {
+  html: string,
+  lastDataHash: string,
+  lastExpressionHash: string
+}>()
+
+function getComponentCacheKey(comp: Component): string {
+  return `${comp.getId()}-${comp.get('updated_at') || 0}`
+}
+
+function getDataHash(data: unknown): string {
+  return JSON.stringify(data).substring(0, 100) // Quick hash
+}
+
+function getExpressionHash(comp: Component): string {
+  const states = comp.get('privateStates') || []
+  return JSON.stringify(states).substring(0, 100)
+}
+
+// Batch DOM operations for better performance
+const domOperationQueue: Array<() => void> = []
+let domBatchScheduled = false
+
+function queueDOMOperation(operation: () => void) {
+  domOperationQueue.push(operation)
+  if (!domBatchScheduled) {
+    domBatchScheduled = true
+    requestAnimationFrame(() => {
+      const operations = domOperationQueue.splice(0)
+      operations.forEach(op => op())
+      domBatchScheduled = false
+    })
+  }
+}
+
 // exported for unit tests only
 export function renderPreview(comp: Component, deep = 0) {
   const view = comp.view
@@ -249,63 +326,87 @@ export function renderPreview(comp: Component, deep = 0) {
   const __data = renderLoopData(comp)
 
   if (__data) {
-    // console.log(`🔄 Loop data for ${comp.getId()}:`, __data.map((item: unknown, idx: number) =>
-    //   `${idx}: ${item.name || item.code || JSON.stringify(item).substring(0, 50)}`
-    // ))
+    // Early exit for empty arrays - huge performance boost
     if (__data.length === 0) {
-      el.remove()
-    } else {
-      const initialPreviewIndex = getPreviewIndex(comp) || 0
+      queueDOMOperation(() => el.remove())
+      return
+    }
 
-      // Render each loop iteration
-      // Render first iteration in the original element
-      // FIXME: as a workaround we need to loop reverse on the __data array, I have no idea why
-      const fromIdx = __data.length - 1
+    const initialPreviewIndex = getPreviewIndex(comp) || 0
+
+    // Limit rendering for very large datasets to prevent browser freeze
+    const maxRenderItems = 50 // Render max 50 items at once
+    const dataToRender = __data.length > maxRenderItems ? __data.slice(0, maxRenderItems) : __data
+
+    // Check if we can skip re-rendering based on cache
+    const cacheKey = getComponentCacheKey(comp)
+    const dataHash = getDataHash(dataToRender)
+    const exprHash = getExpressionHash(comp)
+    const cached = renderCache.get(cacheKey)
+
+    if (cached && cached.lastDataHash === dataHash && cached.lastExpressionHash === exprHash) {
+      return // Skip re-render
+    }
+
+    // Batch DOM operations for loop rendering
+    queueDOMOperation(() => {
+      const fromIdx = dataToRender.length - 1
       const toIdx = 0
+
+      // Clean up existing clones first
+      let next = el.nextElementSibling
+      while (next && next.classList.contains('loop-clone')) {
+        const toRemove = next
+        next = next.nextElementSibling
+        toRemove.remove()
+      }
+
       setPreviewIndex(comp, fromIdx)
-      if(isComponentVisible(comp)) {
+      if (isComponentVisible(comp)) {
         renderContent(comp, deep)
         renderAttributes(comp)
       } else {
         el.remove()
+        return
       }
 
-      // For subsequent iterations: clone first, then render into original, then clone again
+      // Create clones for remaining iterations
       for (let idx = fromIdx - 1; idx >= toIdx; idx--) {
-        // Clone the current state (with previous iteration's content)
         const clone = el.cloneNode(true) as HTMLElement
-
-        // Remove grapesjs selected marker
         clone.classList.remove('gjs-selected')
+        clone.classList.add('loop-clone') // Mark as clone for cleanup
 
-        // Keep the selection mechanism
         clone.addEventListener('click', () => {
           setTimeout(() => el.dispatchEvent(new MouseEvent('click', {bubbles: true})))
         })
 
-        // Add the clone to the canvas
         el.insertAdjacentElement('afterend', clone)
 
-        // Set preview index for the next iteration and render into original element
         setPreviewIndex(comp, idx)
         if (isComponentVisible(comp)) {
           renderContent(comp, deep)
           renderAttributes(comp)
         } else {
-          // el.setAttribute('data-hidden', '')
-          // el.style.display = 'none'
-          // el.innerHTML = 'xxxx'
           el.remove()
+          return
         }
       }
+
       setPreviewIndex(comp, initialPreviewIndex)
-    }
+
+      // Update cache
+      renderCache.set(cacheKey, {
+        html: el.outerHTML,
+        lastDataHash: dataHash,
+        lastExpressionHash: exprHash,
+      })
+    })
   } else {
-    if(isComponentVisible(comp)) {
+    if (isComponentVisible(comp)) {
       renderContent(comp, deep)
       renderAttributes(comp)
     } else {
-      el.remove()
+      queueDOMOperation(() => el.remove())
     }
   }
 }
@@ -315,6 +416,10 @@ export function doRender(editor: Editor) {
     return
   }
   try {
+    // Clear caches at start of render to ensure fresh data
+    clearCaches()
+    renderCache.clear()
+
     editor.trigger(PREVIEW_RENDER_START)
     renderPreview(editor.getWrapper()!)
 
@@ -328,22 +433,20 @@ export function doRender(editor: Editor) {
 }
 
 let renderTimeoutId: NodeJS.Timeout | null = null
-let debounceDelay = 500
-function debouncedRender(editor: Editor, eventName: string) {
+let debounceDelay = 100 // Reduced debounce for better UX
+function debouncedRender(editor: Editor) {
   if (renderTimeoutId) clearTimeout(renderTimeoutId)
   renderTimeoutId = setTimeout(() => {
-    console.info('Refresh preview started because of event', eventName)
     doRender(editor)
     renderTimeoutId = null
   }, debounceDelay)
 }
 
 export default (editor: Editor, opts: DataSourceEditorViewOptions) => {
-  console.log(`Render preview on events: "${opts.previewRefreshEvents}"`)
   const events = opts.previewRefreshEvents!.split(' ')
   for(const eventName of events) {
     editor.on(eventName, () => {
-      debouncedRender(editor, eventName)
+      debouncedRender(editor)
     })
   }
   setTimeout(() => {

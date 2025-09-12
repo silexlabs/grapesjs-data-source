@@ -54,44 +54,41 @@ export default (editor: Editor, opts: Partial<DataSourceEditorOptions> = {}) => 
     .map((ds: IDataSourceOptions) => createDataSource(ds))
 
   // Connect the data sources (async)
-  Promise.all(dataSources
-    .map(ds => {
-      console.log(`Connecting data source: ${ds.id}`)
-      return ds.connect()
-        .then(() => console.log(`✅ Data source ${ds.id} connected successfully`))
-        .catch(err => console.error(`❌ Data source ${ds.id} connection failed:`, err))
-    }))
-    .then(() => console.info('All data sources connection attempts completed'))
-    .catch(err => console.error('Error while connecting data sources', err))
+  Promise.all(dataSources.map(async ds => {
+    try {
+      return await ds.connect();
+    } catch (err) {
+      console.error(`Data source ${ds.id} connection failed:`, err);
+      return null
+    }
+  })).then(() => {
+    // Initialize the global data source manager
+    initializeDataSourceManager(dataSources, editor, options)
 
-  // Initialize the global data source manager
-  initializeDataSourceManager(dataSources, editor, options)
+    // Register the UI for component properties
+    view(editor, options)
 
-  // Register the UI for component properties
-  view(editor, options)
+    // Save and load data sources
+    storage(editor)
 
-  // Save and load data sources
-  storage(editor)
+    // Register the commands
+    commands(editor, options)
 
-  // Register the commands
-  commands(editor, options)
+    // Use grapesjs-notifications plugin for errors
+    editor.on(DATA_SOURCE_ERROR, (msg: string, ds: IDataSource) => editor.runCommand('notifications:add', { type: 'error', message: `Data source \`${ds.id}\` error: ${msg}`, group: NOTIFICATION_GROUP }))
 
-  // Use grapesjs-notifications plugin for errors
-  editor.on(DATA_SOURCE_ERROR, (msg: string, ds: IDataSource) => editor.runCommand('notifications:add', { type: 'error', message: `Data source \`${ds.id}\` error: ${msg}`, group: NOTIFICATION_GROUP }))
-
-  // Load data after editor is fully loaded
-  editor.on('load', () => {
-    console.log('EDITOR LOADED')
-    refreshDataSources()
-  })
-
-  // Also refresh data when storage loads (to handle website data loading)
-  editor.on('storage:end:load', () => {
-    console.log('STORAGE LOADED')
-    // Use setTimeout to ensure components are fully loaded
-    setTimeout(() => {
+    // Load data after editor is fully loaded
+    editor.on('load', () => {
       refreshDataSources()
-    }, 100)
+    })
+
+    // Also refresh data when storage loads (to handle website data loading)
+    editor.on('storage:end:load', () => {
+      // Use setTimeout to ensure components are fully loaded
+      setTimeout(() => {
+        refreshDataSources()
+      }, 100)
+    })
   })
 }
 
