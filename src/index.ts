@@ -35,7 +35,7 @@ export * from './types'
 /**
  * GrapeJs plugin entry point
  */
-export default (editor: Editor, opts: Partial<DataSourceEditorOptions> = {}) => {
+export default async (editor: Editor, opts: Partial<DataSourceEditorOptions> = {}) => {
   const options: DataSourceEditorOptions = {
     dataSources: [],
     filters: [],
@@ -61,34 +61,39 @@ export default (editor: Editor, opts: Partial<DataSourceEditorOptions> = {}) => 
       console.error(`Data source ${ds.id} connection failed:`, err);
       return null
     }
-  })).then(() => {
-    // Initialize the global data source manager
-    initializeDataSourceManager(dataSources, editor, options)
+  }))
+  // .then(() => init(editor, dataSources, options))
+  // .catch(() => init(editor, dataSources, options))
+  init(editor, dataSources, options) // init fail if async
+}
 
-    // Register the UI for component properties
-    view(editor, options)
+function init(editor: Editor, dataSources: IDataSource[], options: DataSourceEditorOptions) {
+  // Initialize the global data source manager
+  initializeDataSourceManager(dataSources, editor, options)
 
-    // Save and load data sources
-    storage(editor)
+  // Register the UI for component properties
+  view(editor, options)
 
-    // Register the commands
-    commands(editor, options)
+  // Save and load data sources
+  storage(editor)
 
-    // Use grapesjs-notifications plugin for errors
-    editor.on(DATA_SOURCE_ERROR, (msg: string, ds: IDataSource) => editor.runCommand('notifications:add', { type: 'error', message: `Data source \`${ds.id}\` error: ${msg}`, group: NOTIFICATION_GROUP }))
+  // Register the commands
+  commands(editor, options)
 
-    // Load data after editor is fully loaded
-    editor.on('load', () => {
+  // Use grapesjs-notifications plugin for errors
+  editor.on(DATA_SOURCE_ERROR, (msg: string, ds: IDataSource) => editor.runCommand('notifications:add', { type: 'error', message: `Data source \`${ds.id}\` error: ${msg}`, group: NOTIFICATION_GROUP }))
+
+  // Load data after editor is fully loaded
+  editor.on('load', () => {
+    refreshDataSources()
+  })
+
+  // Also refresh data when storage loads (to handle website data loading)
+  editor.on('storage:end:load', () => {
+    // Use setTimeout to ensure components are fully loaded
+    setTimeout(() => {
       refreshDataSources()
-    })
-
-    // Also refresh data when storage loads (to handle website data loading)
-    editor.on('storage:end:load', () => {
-      // Use setTimeout to ensure components are fully loaded
-      setTimeout(() => {
-        refreshDataSources()
-      }, 100)
-    })
+    }, 100)
   })
 }
 

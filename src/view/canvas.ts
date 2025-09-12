@@ -374,6 +374,7 @@ export function renderPreview(comp: Component, deep = 0) {
       for (let idx = fromIdx - 1; idx >= toIdx; idx--) {
         const clone = el.cloneNode(true) as HTMLElement
         clone.classList.remove('gjs-selected')
+        clone.querySelectorAll('.gjs-selected').forEach(el => el.classList.remove('gjs-selected'))
         clone.classList.add('loop-clone') // Mark as clone for cleanup
 
         clone.addEventListener('click', () => {
